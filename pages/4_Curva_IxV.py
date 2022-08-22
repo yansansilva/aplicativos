@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy import optimize
 import plotly.graph_objects as go
+from ImportarArquivos import import_from_GoogleDrive
 
 st.set_page_config(
     page_title="GEDAE Aplicativos - Curva IxV",
@@ -12,18 +13,31 @@ st.set_page_config(
 
 st.title("Curva IxV")
 
-importar_dados = st.radio('Parâmetros do Módulo Fotovoltaico', ('Importar', 'Digitar'), horizontal=True)
-
+importar_dados = st.radio('Parâmetros do Módulo Fotovoltaico',
+                          ('Digitar',
+                           'Importar própria base de dados',
+                           'Importar base de dados do servidor'),
+                          horizontal=True)
+st.write(f'''
+    _________________________________________________________________________
+        ''')
 Pmp, Imp, Vmp, Isc, Voc, CIsc, CVoc = [0, 0, 0, 0, 0, 0, 0]
 
-if importar_dados == 'Importar':
+modulo = ''
+if importar_dados != 'Digitar':
     st.write('### Importe os dados dos módulos fotovoltaicos')
-    arquivo_modulos = st.file_uploader('Dados dos módulos', type=['XLS', 'XLSX'])
-    if arquivo_modulos is not None:
-        st.write('### Selecione o módulo fotovoltaico')
-        dados_modulo = pd.read_excel(arquivo_modulos, sheet_name=0,
+    if importar_dados == 'Importar própria base de dados':
+        arquivo_modulos = st.file_uploader('Dados dos módulos', type=['XLS', 'XLSX'])
+        if arquivo_modulos is not None:
+            dados_modulo = pd.read_excel(arquivo_modulos, sheet_name=0,
                                      index_col=0)  # Características do módulo fotovoltaico
+            st.write('### Selecione o módulo fotovoltaico')
+            modulo = st.selectbox('Módulo', dados_modulo.columns)
+    elif importar_dados == 'Importar base de dados do servidor':
+        dados_modulo, dados_inversor, dados_ambiente = import_from_GoogleDrive()
+        st.write('### Selecione o módulo fotovoltaico')
         modulo = st.selectbox('Módulo', dados_modulo.columns)
+    if modulo != '':
         if st.checkbox('Mostrar Dados do Módulo'):
             st.dataframe(dados_modulo[modulo])
 
@@ -39,7 +53,6 @@ if importar_dados == 'Importar':
                    'Coef. Temp. I (%)'] / 100  # Coeficiente de temperatura de Isc(Não está expresso em porcentagem)
         CVoc = dados_modulo[modulo][
                    'Coef. Temp. V (%)'] / 100  # Coeficiente de temperatura de Voc(Não está expresso em porcentagem)
-
 else:
     st.write('### Digite os dados dos módulos fotovoltaicos')
 
@@ -47,7 +60,7 @@ else:
 
     coluna1, coluna2, coluna3 = st.columns((2, 2, 1))
 
-    coluna1.write('## Características elétricas')
+    coluna1.write('## Parâmetros elétricos')
     Pmp = coluna1.number_input('Pmp: ', min_value=0)  # Potência elétrica máxima
     Imp = coluna1.number_input('Imp: ', min_value=0.0)  # Corrente na máxima potência
     Vmp = coluna1.number_input('Vmp: ', min_value=0.0)  # tensão na máxima potência
