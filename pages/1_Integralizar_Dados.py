@@ -50,6 +50,10 @@ with tabs[0]:
 
 	dados = carregar_dados(up, 'integralizar')
 
+	st.write(f'''
+		    _________________________________________________________________________
+		        ''')
+
 #dados_filtrados, dados_integralizados = pd.DataFrame(), pd.DataFrame()
 with tabs[1]:
 	if dados.size != 0:
@@ -91,6 +95,10 @@ with tabs[1]:
 			excel = converter_df_excel(dados_integralizados)
 			coluna_salvar_1.download_button(label="Download em CSV", data=csv, file_name=nomearquivo + '.csv', mime='text/csv')
 			coluna_salvar_2.download_button(label="Download em Excel", data=excel, file_name=nomearquivo+'.xlsx', mime='application/vnd.ms-excel')
+
+	st.write(f'''
+			_________________________________________________________________________
+				''')
 
 with tabs[2]:
 	if dados.size != 0:
