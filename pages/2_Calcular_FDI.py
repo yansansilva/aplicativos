@@ -33,6 +33,9 @@ with tabs[0]:
     st.write("### Upload dos arquivos")
     importar_dados = st.radio('', ('Importar sua própria base de dados', 'Importar base de dados do servidor'),
                               horizontal=True)
+    st.write(f'''
+    _________________________________________________________________________
+        ''')
     if importar_dados == 'Importar sua própria base de dados':
         coluna_upload_1, coluna_upload_2, coluna_upload_3 = st.columns((2, 2, 2))
         arquivo_modulos = coluna_upload_1.file_uploader('Dados dos Módulos', type=['XLS', 'XLSX'])
