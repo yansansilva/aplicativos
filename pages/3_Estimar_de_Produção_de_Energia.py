@@ -1,213 +1,184 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objs as go
-from scipy.interpolate import CubicSpline
-from AnaliseFotovoltaico import *
-from ExtrairDadosSFCR import *
-from ImportarArquivos import *
+from scipy import optimize
+import plotly.graph_objects as go
+from ImportarArquivos import import_from_GoogleDrive
 
 st.set_page_config(
-    page_title="GEDAE Aplicativos - Estimativa de Geração de Energia",
+    page_title="GEDAE Aplicativos - Curva IxV",
     page_icon="👋",
     layout="wide"
 )
 
-st.title("Estimativa de Geração de Energia")
+st.title("Curva IxV")
 
-tab_titles = [
-    'Importar Arquivos',
-    'Selecionar os componentes do SFCR',
-    'Resultados',
-]
+importar_dados = st.radio('Parâmetros do Módulo Fotovoltaico',
+                          ('Digitar',
+                           'Importar própria base de dados',
+                           'Importar base de dados do servidor'),
+                          horizontal=True)
+st.write(f'''
+    _________________________________________________________________________
+        ''')
+Pmp, Imp, Vmp, Isc, Voc, CIsc, CVoc = [0, 0, 0, 0, 0, 0, 0]
 
-tabs = st.tabs(tab_titles)
-
-dados_modulo, dados_inversor, dadosAmbienteValidos = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-Iinci, Tambi = [], []
-modulo, inversor, arquivo_modulos, arquivo_inversores, arquivo_ambiente = '', '', '', '',''
-
-with tabs[0]:
-    st.write("### Upload dos arquivos")
-    importar_dados = st.radio('', ('Importar sua própria base de dados', 'Importar base de dados do servidor'),
-                              horizontal=True)
-    if importar_dados == 'Importar sua própria base de dados':
-        coluna_upload_1, coluna_upload_2, coluna_upload_3 = st.columns((2, 2, 2))
-        arquivo_modulos = coluna_upload_1.file_uploader('Dados dos Módulos', type=['XLS', 'XLSX'])
-        arquivo_inversores = coluna_upload_2.file_uploader('Dados dos Inversores', type=['XLS', 'XLSX'])
-        arquivo_ambiente = coluna_upload_3.file_uploader('Dados do Ambiente', type=['CSV'])
-    else:
-        dados_modulo, dados_inversor, dados_ambiente = import_from_GoogleDrive()
-        dadosAmbienteValidos = dados_ambiente[(dados_ambiente.dropna().values != 0).all(axis=1)]
-        dadosAmbienteValidos['Data'] = pd.to_datetime(dadosAmbienteValidos['Data'])
-        Iinci = dadosAmbienteValidos['Gk'].values  # Cria um vetor irradiância Iinci, eliminando os valores nulos
-        Tambi = dadosAmbienteValidos['Ta'].values  # Cria um vetor temperatura ambiente Tamb, eliminando os valores
-        # correspondentes ao zero de irradiância
-    st.write(f'''
-            _________________________________________________________________________
-              ''')
-
-with tabs[1]:
-    if importar_dados == 'Importar sua própria base de dados':
-        if arquivo_modulos or arquivo_inversores is not None:
-            st.write('### Selecione os componentes do SFCR')
-            dados_pre_estabelecidos = st.checkbox('Utilizar configurações pré-estabelecidas dos SFCR')
-        coluna_selecao_1, coluna_selecao_2, coluna_selecao_3 = st.columns((2, 2, 2))
+modulo = ''
+if importar_dados != 'Digitar':
+    st.write('### Importe os dados dos módulos fotovoltaicos')
+    if importar_dados == 'Importar própria base de dados':
+        arquivo_modulos = st.file_uploader('Dados dos módulos', type=['XLS', 'XLSX'])
         if arquivo_modulos is not None:
-            dados_modulo = carregar_dados(arquivo_modulos, 'FDI')  # Características do módulo fotovoltaico
-            modulo = coluna_selecao_1.selectbox('Módulo', dados_modulo.columns)
-            if coluna_selecao_1.checkbox('Mostrar Dados do Módulo'):
-                coluna_selecao_1.dataframe(dados_modulo[modulo])
-        if arquivo_inversores is not None:
-            dados_inversor = carregar_dados(arquivo_inversores, 'FDI')  # Infomações dos inversores
-            inversor = coluna_selecao_2.selectbox('Inversor', dados_inversor.columns)
-            if coluna_selecao_2.checkbox('Mostrar Dados do Inversor'):
-                coluna_selecao_2.dataframe(dados_inversor[inversor])
-        if arquivo_ambiente is not None:
-            dados_ambiente = carregar_dados(arquivo_ambiente, 'FDI')  # Informações de irradiância e temperatura ambiente
-            dadosAmbienteValidos = dados_ambiente[(dados_ambiente.dropna().values != 0).all(axis=1)]
-            dadosAmbienteValidos['Data'] = pd.to_datetime(dadosAmbienteValidos['Data'])
-            Iinci = dadosAmbienteValidos['Gk'].values  # Cria um vetor irradiância Iinci, eliminando os valores nulos
-            Tambi = dadosAmbienteValidos['Ta'].values  # Cria um vetor temperatura ambiente Tamb, eliminando os valores
-            # correspondentes ao zero de irradiância
-        if arquivo_modulos and arquivo_inversores and arquivo_ambiente is not None:
-            if dados_pre_estabelecidos:
-                # Número da coluna do inversor desejado para análise
-                inversor = dados_inversor.columns[int(dados_modulo[modulo]['Nº célula ref. ao inversor']) - 1]
-            Pmp, Imp, Vmp, Isc, Voc, TNOC, CIsc, CVoc, Gama = extrair_dados_modulos(dados_modulo, modulo, 'FDI')
-            PnInv, Pmax, FVImp, Vioc, Imax, PmaxInv, EficInv10, EficInv50, EficInv100 = extrair_dados_inversores(
-                dados_inversor, inversor)
-    else:
-        st.write('### Selecione os componentes do SFCR')
-        dados_pre_estabelecidos = st.checkbox('Utilizar configurações pré-estabelecidas dos SFCR')
+            dados_modulo = pd.read_excel(arquivo_modulos, sheet_name=0,
+                                     index_col=0)  # Características do módulo fotovoltaico
+            st.write('### Selecione o módulo fotovoltaico')
+            modulo = st.selectbox('Módulo', dados_modulo.columns)
+    elif importar_dados == 'Importar base de dados do servidor':
+        dados_modulo, dados_inversor, dados_ambiente = import_from_GoogleDrive()
+        st.write('### Selecione o módulo fotovoltaico')
+        modulo = st.selectbox('Módulo', dados_modulo.columns)
+    if modulo != '':
+        if st.checkbox('Mostrar Dados do Módulo'):
+            st.dataframe(dados_modulo[modulo])
 
-        coluna_selecao_1, coluna_selecao_2, coluna_selecao_3 = st.columns((2, 2, 2))
-        modulo = coluna_selecao_1.selectbox('Módulo', dados_modulo.columns)
-        if coluna_selecao_1.checkbox('Mostrar Dados do Módulo'):
-            coluna_selecao_1.dataframe(dados_modulo[modulo])
-        inversor = coluna_selecao_2.selectbox('Inversor', dados_inversor.columns)
-        if coluna_selecao_2.checkbox('Mostrar Dados do Inversor'):
-            coluna_selecao_2.dataframe(dados_inversor[inversor])
-        if dados_pre_estabelecidos:
-            # Número da coluna do inversor desejado para análise
-            inversor = dados_inversor.columns[int(dados_modulo[modulo]['Nº célula ref. ao inversor']) - 1]
-        Pmp, Imp, Vmp, Isc, Voc, TNOC, CIsc, CVoc, Gama, N_mod_serie, N_mod_paralelo = extrair_dados_modulos(dados_modulo, modulo, 'Energia')
-        PnInv, Pmax, FVImp, Vioc, Imax, PmaxInv, EficInv10, EficInv50, EficInv100 = extrair_dados_inversores(
-            dados_inversor, inversor)
-    st.write(f'''
-            _________________________________________________________________________
-              ''')
-    # Pmref = N_mod_paralelo*N_mod_serie*Pmp # Potência nominal do gerador fotovoltaico
-    ##### Fim das configurações iniciais
+        ## Características elétricas
+        Pmp = dados_modulo[modulo]['Pmp']  # Potência elétrica máxima
+        Imp = dados_modulo[modulo]['Imp']  # Corrente na máxima potência
+        Vmp = dados_modulo[modulo]['Vmp']  # tensão na máxima potência
+        Isc = dados_modulo[modulo]['Isc']  # Corrente de curto - circuito
+        Voc = dados_modulo[modulo]['Voc']  # Tensão de circuito aberto
 
-## Valores de referência
-Iincref = 1000  # Irradiância de referência W/m2
-Tcref = 25  # Temperatura na condição de referência
+        ## parâmetros térmicos
+        CIsc = dados_modulo[modulo][
+                   'Coef. Temp. I (%)'] / 100  # Coeficiente de temperatura de Isc(Não está expresso em porcentagem)
+        CVoc = dados_modulo[modulo][
+                   'Coef. Temp. V (%)'] / 100  # Coeficiente de temperatura de Voc(Não está expresso em porcentagem)
+else:
+    st.write('### Digite os dados dos módulos fotovoltaicos')
 
-## Faixa de span da solução
-sol_span_low = 0.6
-sol_span_high = 2
+    modulo = st.text_input('Modelo do módulo', value='')
 
-## PERDAS CC
-PD = 0.02  # Perdas decorrentes da dispersão entre módulos
-PDCFP = 0.025  # Perdas em Diodos, Cabos, Fusíveis e Proteções
-## PERDAS CA
-PCP = 0.02  # Cabos e Proteções
-##########################################################
+    coluna1, coluna2, coluna3 = st.columns((2, 2, 1))
 
-uti_max = 1  # Utiliza o FDI cuja produtividade é máxima para o dimensionamento do gerador(1) para utilizar este procedimento e 0 para não utilizar)
+    coluna1.write('## Parâmetros elétricos')
+    Pmp = coluna1.number_input('Pmp: ', min_value=0)  # Potência elétrica máxima
+    Imp = coluna1.number_input('Imp: ', min_value=0.0)  # Corrente na máxima potência
+    Vmp = coluna1.number_input('Vmp: ', min_value=0.0)  # tensão na máxima potência
+    Isc = coluna1.number_input('Isc: ', min_value=0.0)  # Corrente de curto - circuito
+    Voc = coluna1.number_input('Voc: ', min_value=0.0)  # Tensão de circuito aberto
 
-FDIi = 0.2
-FDI, EficInv, Yf = [], [], []
-
-if modulo != '' and inversor != '' and Tambi != []:
-    while FDIi <= sol_span_high:
-        Pmref = PnInv / FDIi
-        # Função que calcula a potência teórica produzida por um gerador fotovoltaico
-        Pmei = PMPArranjoFV(Pmref, Iincref, Gama, Tcref, TNOC, Iinci, Tambi)
-        # Correção de perdas associadas
-        Pmei = Pmei * (1 - PD - PDCFP)
-        # Parâmetro característico do inversor que computa as perdas de autoconsumo
-        k0 = (1 / (9 * EficInv100) - 1 / (4 * EficInv50) + 5 / (36 * EficInv10)) * 100
-        # Parâmetro característico do inversor que computa as perdas proporcionais ao carregamento
-        k1 = (-1 + (-4 / (3 * EficInv100) + 33 / (12 * EficInv50) - 5 / (12 * EficInv10)) * 100)
-        # Parâmetro característico do inversor que computa as perdas proporcionais ao quadrado do carregamento
-        k2 = (20 / (9 * EficInv100) - 5 / (2 * EficInv50) + 5 / (18 * EficInv10)) * 100
-        # Função que calcula a potência de saída do inversor
-        Psaida, p0, PperdasDC, Pperdas = CalcPotSaidaINV(Pmei, PnInv, PmaxInv, k0, k1, k2)
-
-        EficInv.append((sum(Psaida) / sum(Pmei)) * 100)  # Eficiência do inversor
-        Yf.append((sum(Psaida) * (1 - PCP)) / Pmref)  # Produtividade, corrigidas as perdas em cabos e proteções
-        FDI.append(FDIi)
-        FDIi = round(FDIi + 0.1, 1)  # Incrementa o FDI
-
-    #############-EFICIÊNCIA ENERGÉTICA DO INVERSOR-##########
-    if uti_max == 1:
-        ind_FDI_max = Yf.index(max(Yf))
-        FDI_dim = FDI[ind_FDI_max]
-
-    Tc = max(Tambi) + 1000 * (TNOC - 20) / 800
-    Tc_min = min(Tambi) + 200 * (TNOC - 20) / 800
-
-    FDI_interv = np.round(np.arange(-0.0019933, sol_span_high + 0.01, 0.01), 2).tolist()
-    Yf_interp = CubicSpline(FDI, Yf)
-
-    calculo = 'Energia'
-    figura = None
-
-    #Sistema.calc_ger(Vmp, Voc, CVoc, Imax, Imp, Pmp, Tc, Tc_min, Tcref, FVImp, PnInv, sol_span_low, sol_span_high,
-    #                 FDI_interv, Yf_interp, modulo, inversor, calculo, figura)
+    coluna2.write('## Parâmetros térmicos')
+    CIsc = coluna2.number_input('CIsc: ', min_value=0.0, step=0.001, format="%.3f")/100    # Coeficiente de temperatura de Isc(Não está expresso em porcentagem)
+    CVoc = coluna2.number_input('CVoc: ', max_value=0.0, step=0.001, format="%.3f")/100    # Coeficiente de temperatura de Voc(Não está expresso em porcentagem)
 
 
-    dadosAmbienteValidos = dadosAmbienteValidos.assign(Psaida=np.abs(Psaida)).set_index('Data')
-    potenciaSaida = dadosAmbienteValidos['Psaida']
+if Pmp != 0 and Imp != 0 and Vmp != 0 and Isc != 0 and Voc != 0 and CIsc != 0 and CVoc != 0:
+    # --------------------------------------------------------------------------------------
+    # Parâmetros nas condições STC
+    Irradiancia_referencia = 1000
+    Tac = 25
+    # --------------------------------------------------------------------------------------
 
-with tabs[2]:
-    if modulo != '' and inversor != '' and Tambi != []:
-        st.write('### Integralização')
-        coluna_integralizacao_1, coluna_integralizacao_2, coluna_integralizacao_3 = st.columns((2, 2, 2))
-        tempo = coluna_integralizacao_1.text_input('Período', '1')
-        escala_de_tempo = {'Dia':'d', 'Mês':'M', 'Ano':'y'}
-        integralizacao = coluna_integralizacao_2.selectbox('Escala de tempo', escala_de_tempo)
-        periodo = tempo + escala_de_tempo[integralizacao]
+    # --------------------------------------------------------------------------------------
 
-        Energia = potenciaSaida.resample(periodo).sum().dropna()/1000
-        Energia = Energia.rename('Energia')
-        Yf = Energia*(1-PCP)/(Pmref/1000) # Produtividade, corrigidas as perdas em cabos e proteções
-        Yf = Yf.rename('Yf')
+    st.write('### Parâmetros ajustáveis para Curva I-V')
 
-        st.write(f'''
-                _________________________________________________________________________
-                  ''')
+    coluna1, coluna2, coluna3 = st.columns((1, 1, 2))
+    coluna1.markdown('''___''')
+    coluna2.markdown('''___''')
 
-        coluna_resultado_1, coluna_resultado_2, coluna_resultado_3 = st.columns((2, 2, 3))
-        coluna_resultado_1.write('Energia')
-        coluna_resultado_1.dataframe(Energia)
-        coluna_resultado_1.write('Total: ' + '{:.2f}'.format(Energia.sum()) + ' kWh')
-        coluna_resultado_2.write('Produtividade')
-        coluna_resultado_2.dataframe(Yf)
+    Irradiancia = coluna1.number_input('Irradiância: ', value=1000)
+    Temperatura_costa_modulo = coluna2.number_input('Temperatura de costa do modulo: ', value=25.0)
+    Resistencia_serie = coluna1.number_input('Resistência serie: ', min_value=0.0, step=0.001, format="%.3f")
+    Resistencia_paralelo = coluna2.number_input('Resistência paralelo: ', min_value=1, value=1000000)
+    Numero_celulas_serie = coluna1.number_input('Número de células em série: ', min_value=1, value=60)
+    Fator_de_idealidade = coluna2.slider('Fator de idealidade: ', min_value=1.0, max_value=2.0)
 
-        fig = go.Figure()
-        fig.add_trace(go.Line(x=Energia.index, y=Energia))
-        fig.add_trace(go.Line(x=Yf.index, y=Yf, line=dict(dash='dash')))
-        fig.update_layout(
-            title=f'Inversor: {inversor} <br> Módulo: {modulo}',
-            title_x=0.5,
-            #xaxis_title='FDI = PnomInv/PnomGer',
-            #yaxis_title="Yf (kWh / kWp)",
-            font=dict(
-                family="Courier New, monospace",
-                size=12,
-                color="RebeccaPurple"
-            ),
-            showlegend=False,
-            width=500, height=350
-        )
-        fig.update_xaxes(rangemode='tozero')
-        fig.update_yaxes(rangemode='tozero')
+    S = Irradiancia / Irradiancia_referencia
+    Tc = Temperatura_costa_modulo
+    Rs = Resistencia_serie
+    Rp = Resistencia_paralelo
+    # --------------------------------------------------------------------------------------
 
-        coluna_resultado_3.plotly_chart(fig)
+    # --------------------------------------------------------------------------------------
+    # Dados de Catálogo
+    Ns = Numero_celulas_serie
+    Voc_Tjref = Voc / Ns
+    Isc_Tjref = Isc
+    ALFA = CIsc
+    BETA = CVoc
+    # --------------------------------------------------------------------------------------
 
-    st.write(f'''
-                _________________________________________________________________________
-                  ''')
+    # --------------------------------------------------------------------------------------
+    # Constantes
+    q = 1.6E-19
+    k = 1.38E-23
+    n = Fator_de_idealidade
+    Eg = 1.12
+    Tjref = 273 + Tac
+    # --------------------------------------------------------------------------------------
+
+    # --------------------------------------------------------------------------------------
+    # Atribuindo os valores para Tensão de Módulo, Tensão de Célula e de Corrente
+    Va = np.linspace(0, Voc, 255)
+    Vc = np.linspace(0, Voc, 255) / Ns
+    # --------------------------------------------------------------------------------------
+
+    # --------------------------------------------------------------------------------------
+    # Cálculos
+    Tak = Tjref
+    Tj = 273 + Tc
+
+    Voc_Tj = Voc_Tjref * (1 + BETA * (Tj - Tjref))
+    Isc_Tj = Isc_Tjref * (1 + ALFA * (Tj - Tjref))
+
+    Vt_Ta = n * k * Tjref / q
+
+    Iph_Tjref = Isc_Tj * S
+    Iph = Iph_Tjref + ALFA * (Tj - Tjref)
+    Io_Tjref = Isc_Tj / (np.exp(Voc_Tj / Vt_Ta) - 1)
+    Io = Io_Tjref * (Tak / Tjref) ** (3 / n) * np.exp(-q * Eg / (n * k) * ((1 / Tak) - (1 / Tjref)))
+
+    # --------------------------------------------------------------------------------------
+    # Método de Newton
+    f = lambda I, Vc: Iph - I - Io * (np.exp((Vc + I * Rs) / Vt_Ta) - 1) - (Vc + I * Rs) / Rp
+    fder = lambda I, Vc: - 1 - (Io * (np.exp((Vc + I * Rs) / Vt_Ta) - 1)) * Rs / Vt_Ta - Rs / Rp
+    I = [0 for x in range(len(Vc))]
+    I_res = optimize.newton(f, I, fprime=fder, args=(Vc,), maxiter=100)
+    # --------------------------------------------------------------------------------------
+
+    resultado = pd.DataFrame(zip(*[I_res, Va]), columns=['I_res', 'Va'])
+
+    importar_curva_medida = st.checkbox('Plotar curva IxV medida')
+    curva_medida = pd.DataFrame()
+    if importar_curva_medida:
+        st.write('#### Importe a curva IxV medida:')
+        arquivo_curva_medida = st.file_uploader('Curva IxV medida', type=['XLS', 'XLSX'])
+        if arquivo_curva_medida is not None:
+            curva_medida = pd.read_excel(arquivo_curva_medida)
+
+    fig = go.Figure()
+    fig.add_trace(go.Line(x=resultado[resultado['I_res'] >= 0]['Va'],
+                          y=resultado[resultado['I_res'] >= 0]['I_res']))
+
+    if not curva_medida.empty:
+        fig.add_trace(go.Line(x=curva_medida['V'],
+                              y=curva_medida['I']))
+
+    fig.update_layout(
+        title=f'Curva IxV: {modulo}',
+        title_x=0.5,
+        title_y=0.85,
+        xaxis_title='Tensão do módulo (V)',
+        yaxis_title='Corrente do módulo (A)',
+        font=dict(
+            family="Courier New, monospace",
+            size=12,
+            color="RebeccaPurple"
+        ),
+        showlegend=False,
+        width=700, height=400
+    )
+
+    coluna3.plotly_chart(fig)
+    # --------------------------------------------------------------------------------------
